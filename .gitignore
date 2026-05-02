@@ -1,0 +1,35 @@
+# ── Data and model artifacts (never commit) ──────────────────────────────────
+data/
+outputs/
+logs/
+staged_data/
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+adapter_model*
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# ── Notebooks ────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── OS / IDE ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
