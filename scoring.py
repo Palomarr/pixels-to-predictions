@@ -115,6 +115,7 @@ def score_dataset(
     tta_skip_below: int = 0,
     show_progress: bool = True,
     seed: int = 42,
+    return_logits: bool = False,
 ) -> list[dict]:
     """Score every example in `dataset` (which must be in eval/test mode).
 
@@ -129,9 +130,13 @@ def score_dataset(
             "smart TTA" where TTA hurts on small choice sets — e.g. set
             tta_skip_below=3 to apply TTA only to 3+ choice questions.
         seed: RNG seed for choice permutations (reproducibility).
+        return_logits: if True, each result dict contains a `logits` tensor
+            of shape [num_letters] (post-TTA, with -inf masking on positions
+            >= num_choices) instead of a `pred` integer. Used by the adapter-
+            ensemble path: sum these logits across adapters, then argmax.
 
     Returns:
-        list of {id, pred, gt (or -1), num_choices}.
+        list of {id, pred OR logits, gt (or -1), num_choices}.
     """
     try:
         from tqdm.auto import tqdm
@@ -159,12 +164,14 @@ def score_dataset(
         )
 
         if tta_k <= 1 or all_below:
-            preds = score_batch(
+            # Single forward pass, no TTA. Logits already have -inf on invalid
+            # positions (masking is inside _score_batch_letter_logits).
+            batch_logits = _score_batch_letter_logits(
                 model, processor,
                 images=[b["image"] for b in batch],
                 prompts=[b["prompt"] for b in batch],
                 num_choices_per=[b["num_choices"] for b in batch],
-            )
+            ).float()
         else:
             # Accumulate per-original-choice log-probs across K permutations.
             # Note: argmax is invariant to scaling, so summing is fine — no
@@ -211,37 +218,46 @@ def score_dataset(
                         accum[bi, orig_choice] += lf[bi, shuf_pos]
 
             # Set positions beyond num_choices to -inf so they can't win argmax.
-            # (They're zero-valued because we never wrote to them above.)
             for bi, b in enumerate(batch):
                 accum[bi, b["num_choices"]:] = float("-inf")
 
-            preds = accum.argmax(dim=1).cpu().tolist()
+            batch_logits = accum
 
             # Smart TTA: for examples below the threshold, replace the TTA
-            # prediction with the no-TTA (identity) prediction. Pass 0 in the
-            # K loop above already used identity, so we can recover its
-            # argmax by re-running just the identity pass on those examples.
+            # logits row with a single identity-pass (no-TTA) forward.
             if tta_skip_below > 0:
                 below_idx = [bi for bi, b in enumerate(batch)
                              if b["num_choices"] < tta_skip_below]
                 if below_idx:
                     sub_batch = [batch[bi] for bi in below_idx]
-                    sub_preds = score_batch(
+                    identity_logits = _score_batch_letter_logits(
                         model, processor,
                         images=[b["image"] for b in sub_batch],
                         prompts=[b["prompt"] for b in sub_batch],
                         num_choices_per=[b["num_choices"] for b in sub_batch],
-                    )
-                    for bi, sp in zip(below_idx, sub_preds):
-                        preds[bi] = sp
+                    ).float()
+                    for sub_idx, bi in enumerate(below_idx):
+                        batch_logits[bi] = identity_logits[sub_idx]
 
-        for b, p in zip(batch, preds):
-            results.append({
-                "id": b["id"],
-                "pred": int(p),
-                "gt": b.get("answer", -1),
-                "num_choices": b["num_choices"],
-            })
+        # Build results from batch_logits (always [B, max_letters], post-TTA,
+        # with -inf at invalid positions).
+        if return_logits:
+            for bi, b in enumerate(batch):
+                results.append({
+                    "id": b["id"],
+                    "logits": batch_logits[bi].detach().cpu(),
+                    "gt": b.get("answer", -1),
+                    "num_choices": b["num_choices"],
+                })
+        else:
+            preds = batch_logits.argmax(dim=1).cpu().tolist()
+            for b, p in zip(batch, preds):
+                results.append({
+                    "id": b["id"],
+                    "pred": int(p),
+                    "gt": b.get("answer", -1),
+                    "num_choices": b["num_choices"],
+                })
     return results
 
 
