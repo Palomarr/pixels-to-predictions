@@ -13,6 +13,7 @@ Key design decisions:
 from __future__ import annotations
 import json
 import os
+import random
 from pathlib import Path
 from typing import Any
 
@@ -165,10 +166,32 @@ class ScienceQADataset(Dataset):
         img = Image.open(self.data_dir / row["image_path"]).convert("RGB")
 
         if self.mode == "train":
+            choices = list(row["choices"])
+            answer_idx = int(row["answer"])
+
+            # Choice-order augmentation: randomly permute choices each access.
+            # The answer letter is updated to track the new position of the
+            # correct choice. With CFG.seed already setting Python's `random`
+            # module via HF's set_seed, this is run-level reproducible.
+            if CFG.train_choice_order_aug and len(choices) > 1:
+                perm = list(range(len(choices)))
+                random.shuffle(perm)
+                choices = [choices[i] for i in perm]
+                answer_idx = perm.index(int(row["answer"]))
+
+            answer_letter = CFG.choice_letters[answer_idx]
+            text = build_prompt_from_fields(
+                question=row["question"],
+                choices=choices,
+                lecture=row.get("lecture"),
+                hint=row.get("hint"),
+                answer_letter=answer_letter,
+            )
+
             return {
                 "image": img,
-                "text": build_prompt_text(row, include_answer=True),
-                "answer_letter": CFG.choice_letters[int(row["answer"])],
+                "text": text,
+                "answer_letter": answer_letter,
                 "id": str(row["id"]),
             }
         else:

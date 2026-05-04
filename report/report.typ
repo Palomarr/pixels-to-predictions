@@ -135,16 +135,17 @@ Our best submission applies the v3 adapter ($r=8$, 384 px, 5 epochs) with smart-
     [v2 (img 512) + smart-TTA], [0.77867],
     [v5 ($r=4$, 5 epochs) + smart-TTA], [0.79476],
     [v4 (7 epochs) + smart-TTA], [0.80281],
-    [*v3 ($r=8$, 5 epochs) + smart-TTA*], [*0.81287*],
+    [v3 ($r=8$, 5 epochs) + smart-TTA], [0.81287],
+    [*v6 (DoRA, 5 epochs) + smart-TTA*], [*0.81488*],
   ),
   caption: [Public leaderboard scores. The pretrained-baseline row is a 200-example val proxy and not directly comparable to the LB rows (1,008-example hidden test); it anchors the qualitative gap from no-fine-tune to fine-tuned.],
 ) <main-result>
 
-Net lift from training-side improvements (v1 #sym.arrow v3): $+4.83$ pp. Net lift from inference-only smart-TTA on v1: $+1.21$ pp.
+Net lift from training-side improvements (v1 #sym.arrow v6): $+5.03$ pp. Net lift from inference-only smart-TTA on v1: $+1.21$ pp. The v6 #sym.arrow v3 LB delta ($+0.20$ pp) is within one standard error and we treat the two configurations as effectively tied; v6 is selected as the final submission on the basis of being the highest measured LB.
 
 = Ablations
 
-We vary training duration, LoRA rank, image resolution, and TTA strategy. All runs use a single random seed; with $n=1{,}008$ test examples and accuracies in 0.77--0.81, the binomial standard error of any single-run LB estimate is $approx 1.3$ pp, so we treat deltas $<2$ pp as suggestive rather than significant.
+We vary training duration, LoRA rank, image resolution, adapter variant (LoRA vs DoRA), and TTA strategy. All runs use a single random seed; with $n=1{,}008$ test examples and accuracies in 0.77--0.81, the binomial standard error of any single-run LB estimate is $approx 1.3$ pp, so we treat deltas $<2$ pp as suggestive rather than significant.
 
 == Headline Ablations Table
 
@@ -155,11 +156,12 @@ We vary training duration, LoRA rank, image resolution, and TTA strategy. All ru
     table.header([*ID*], [*Config*], [*Train-val*], [*LB*]),
     [v1], [$r=8$, all-7, 384 px, 3 epochs (baseline)], [0.7634], [0.77665],
     [v2], [+ img_size=512], [0.7586], [0.77867],
-    [*v3*], [*+ epochs=5 (best)*], [*0.8015*], [*0.81287*],
+    [v3], [+ epochs=5], [0.8015], [0.81287],
     [v4], [+ epochs=7], [0.7996], [0.80281],
     [v5], [$r=4$, $alpha=8$, 5 epochs], [0.7729], [0.79476],
+    [*v6*], [*DoRA, $r=8$, 5 epochs (best)*], [*0.7948*], [*0.81488*],
   ),
-  caption: [Train-val is 4-bit eval (training-time); LB uses bf16 + smart-TTA. v1 LB without TTA: 0.76458.],
+  caption: [Train-val is 4-bit eval (training-time); LB uses bf16 + smart-TTA. v1 LB without TTA: 0.76458. v6 trainable params: 4.62M (vs 4.34M for v1--v4).],
 ) <ablation-table>
 
 == TTA Strategy (No Retraining)
@@ -221,19 +223,29 @@ The diagnostic that motivated the v3 (3 #sym.arrow 5 epochs) ablation was v1's t
 
 The v4 result (5 #sym.arrow 7 epochs) is a textbook overfitting signature on small data: both train-val and LB decline, but _asymmetrically_ ($-0.19$ pp on train-val vs $-1.01$ pp on LB) --- additional updates fit training-specific patterns that transfer partially to similarly-distributed val but less to held-out test. Across the explored range, training duration affects LB by #sym.tilde 5 pp --- larger than both rank (#sym.tilde 1.8 pp) and visual resolution (#sym.tilde 0 pp).
 
+== DoRA: Adapter-Variant Control (v6)
+
+DoRA (Liu et al., 2024) replaces standard LoRA's additive update $W' = W + Delta W$ with a magnitude-direction decomposition $W' = m dot.c (W + Delta W) \/ ||W + Delta W||$, adding one learned magnitude scalar per output channel ($+277{,}480$ params; $4.62$M total trainable, still under the 5M cap; zero inference-time cost after merging). The DoRA paper reports $+1$--$3$ pp on VLM benchmarks; we tested whether the gain transfers to our parameter-budget-constrained, small-data regime.
+
+v6 (DoRA on the v3 config: $r=8$, all-7, 384 px, 5 epochs) yields *0.7948* train-val and *0.81488* LB. Compared to v3, the train-val drops by $0.67$ pp while LB rises by $0.20$ pp --- both within one standard error, so the two are statistically tied. *DoRA produced no measurable lift over standard LoRA at this dataset and parameter scale.*
+
+The val-LB inversion across the v3#sym.arrow v6 pair (train-val v6 _below_ v3, LB v6 _above_ v3) mirrors the earlier v1#sym.arrow v2 inversion (@val-lb-flips). One mechanistic possibility worth flagging: DoRA's per-output-channel magnitude scalar can re-anchor against dequantization noise that varies across 4-bit blocks, partially absorbing the 4-bit#sym.arrow bf16 inference gap that plain LoRA has no mechanism for. Under this interpretation, v6's marginal LB advantage is _not_ greater adapter expressiveness but better robustness to the precision shift forced by the offline-eval rule. We cannot disambiguate this from sampling noise with our single-seed measurements.
+
 = Discussion
 
 == The 4-bit-vs-bf16 Inference Gap <discussion-quantization>
 
 We trained with the base in 4-bit NF4 and computed training-time val with the same 4-bit weights. The submission notebook runs offline and lacks `bitsandbytes`, so it loads the base in `bf16`; the LoRA adapter, optimized assuming 4-bit-dequantized weights, is then applied to the original `bf16` weights. On v1 we measured this gap explicitly: train-val (4-bit) = 0.7634 vs inference val (bf16, no TTA) = 0.7290 --- a *3.44 pp drop* from precision mismatch, larger than the $<1$ pp typically reported in the QLoRA paper. Our config (LoRA on all 7 projections, including high-magnitude MLP weights) is plausibly more sensitive to dequantization noise than attention-only LoRA. We did not pursue 4-bit inference because bundling `bitsandbytes` wheels into a Kaggle Dataset was disproportionate engineering risk for the expected $1$--$3$ pp lift.
 
-== Val-vs-Leaderboard Ranking Flips and Methodology
+== Val-vs-Leaderboard Ranking Flips and Methodology <val-lb-flips>
 
-The v1 #sym.arrow v2 comparison surfaced a striking val-vs-LB ranking inversion: v2 underperformed v1 on val ($-0.48$ pp) but outperformed on LB ($+0.20$ pp). Both deltas are within one standard error; the configurations are *statistically tied* --- which itself argued against allocating capacity toward visual resolution and _for_ training duration. The v3 result confirmed this hypothesis. More broadly, our methodology was *data-curve-driven*: v1's loss curve, still descending at step 580, was the empirical signal that motivated v3 (under-trained?). v3 motivated v4 (does more help?). v3 motivated v5 (could we use half the params?). Each ablation tested a hypothesis derived from prior measurements, not a hyperparameter sweep.
+We observed two val-LB ranking inversions of similar magnitude. v1#sym.arrow v2: train-val $-0.48$ pp, LB $+0.20$ pp. v3#sym.arrow v6: train-val $-0.67$ pp, LB $+0.20$ pp. Each individual delta is within one standard error (so any single inversion is plausibly noise), but the pattern repeats across two independently-trained adapter pairs. Two mechanisms could contribute: (i) the val and test splits are not perfectly i.i.d. with respect to per-example difficulty, so configs that handle hard examples differently can rank-flip; (ii) the 4-bit#sym.arrow bf16 transition at inference time is not a uniform shift across all configurations --- adapter variants that absorb dequantization noise differently produce different effective bf16 outputs from the same training signal. Both mechanisms predict the observed pattern; we cannot disambiguate them from single-seed measurements.
+
+More broadly, our methodology was *data-curve-driven*: v1's loss curve, still descending at step 580, was the empirical signal that motivated v3 (under-trained?). v3 motivated v4 (does more help?). v3 motivated v5 (could we use half the params?). v3's result motivated v6 (does adapter sophistication help?). Each ablation tested a hypothesis derived from prior measurements, not a hyperparameter sweep.
 
 = Reproducibility
 
-Each of the five reported runs (v1--v5) is registered as a named profile in `config.ABLATIONS`. A single command reproduces any row of @ablation-table:
+Each of the six reported runs (v1--v6) is registered as a named profile in `config.ABLATIONS`. A single command reproduces any row of @ablation-table:
 
 ```
 python train.py --ablation v3_epochs5
@@ -243,4 +255,4 @@ The profile maps to the exact `lora_r`, `lora_alpha`, `epochs`, `img_size`, and 
 
 = Conclusion
 
-Under a fixed model, a 5M-trainable-parameter cap, and offline evaluation, we achieved *0.81287* on the public leaderboard via QLoRA at rank 8 across all seven text-decoder linear projections with 5 epochs of training and smart choice-permutation TTA. Training duration was the dominant lever (3 #sym.arrow 5: $+3.62$ pp; 5 #sym.arrow 7: $-1.01$ pp), bounding the optimum near 5 epochs. Higher visual resolution was statistically tied with baseline and halving the rank cost 1.81 pp, indicating that fitting time on the small training set --- not capacity --- was the binding constraint. The 4-bit-vs-`bf16` precision gap forced by the offline-eval rule accounts for #sym.tilde 3.4 pp of headroom otherwise available. All measurements use a single random seed (SE $approx 1.3$ pp); an adapter logit-average ensemble across v1--v3 was not pursued and might still extract $0.3$--$0.7$ pp.
+Under a fixed model, a 5M-trainable-parameter cap, and offline evaluation, we achieved *0.81488* on the public leaderboard via QLoRA at rank 8 across all seven text-decoder linear projections with 5 epochs of training, DoRA's magnitude-direction decomposition, and smart choice-permutation TTA. Training duration was the dominant lever by a wide margin (3 #sym.arrow 5: $+3.62$ pp; 5 #sym.arrow 7: $-1.01$ pp), bounding the optimum near 5 epochs. Higher visual resolution was statistically tied with baseline; halving the rank cost 1.81 pp; DoRA over standard LoRA contributed $+0.20$ pp (within noise). Across the four non-training axes we tested, no single architectural lever moved LB by more than 2 pp --- indicating that fitting time on the small training set, not capacity or adapter sophistication, was the binding constraint. The 4-bit-vs-`bf16` precision gap forced by the offline-eval rule accounts for #sym.tilde 3.4 pp of headroom otherwise available. All measurements use a single random seed (SE $approx 1.3$ pp); an adapter logit-average ensemble across v3 and v6 was not pursued and might still extract $0.3$--$0.7$ pp.

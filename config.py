@@ -71,6 +71,16 @@ class Config:
     # score at test time (log-likelihood of A/B/C/...).
     mask_prompt_loss: bool = True
 
+    # ── Train-time choice-order augmentation ─────────────────────────────────
+    # If True, ScienceQADataset.__getitem__ in train mode randomly permutes
+    # each example's choices (and updates answer_letter accordingly) on every
+    # access. Across N epochs, each example is shown in N different orderings,
+    # multiplying effective training-view diversity by ~min(N, num_choices!).
+    # Directly attacks the small-data regime: 3,109 examples × 5 epochs gives
+    # only ~9,300 example-views without aug; with aug, the model sees many
+    # more *distinct* answer-letter targets per example.
+    train_choice_order_aug: bool = False
+
     # ── Evaluation / scoring ─────────────────────────────────────────────────
     eval_every_steps: int = 200
     save_every_steps: int = 200
@@ -141,6 +151,19 @@ ABLATIONS: dict[str, dict] = {
         "img_size": 384,
         "lora_use_dora": True,
         "run_name": "smolvlm_qlora_dora_r8_all7_v6_epochs5",
+    },
+    # v7: v3 config + choice-order augmentation during training. Each train
+    # example's choices are randomly permuted on every __getitem__ call,
+    # giving the model ~5x more distinct (prompt, answer-letter) pairs over
+    # the same epoch budget. Direct attack on the small-data binding
+    # constraint identified in earlier ablations.
+    "v7_choice_aug": {
+        "lora_r": 8,
+        "lora_alpha": 16,
+        "epochs": 5,
+        "img_size": 384,
+        "train_choice_order_aug": True,
+        "run_name": "smolvlm_qlora_r8_all7_v7_choiceaug_epochs5",
     },
 }
 
