@@ -115,6 +115,7 @@ def build_model(for_training: bool = True):
         bias="none",
         task_type="CAUSAL_LM",
         target_modules=CFG.lora_target_regex,  # PEFT accepts regex strings
+        use_dora=CFG.lora_use_dora,            # False = standard LoRA; True = DoRA
     )
     model = get_peft_model(model, lora_config)
 

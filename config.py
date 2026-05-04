@@ -29,6 +29,10 @@ class Config:
     lora_r: int = 8
     lora_alpha: int = 16            # 2*r heuristic
     lora_dropout: float = 0.05
+    # DoRA (decomposed LoRA) replaces the additive update with a magnitude-direction
+    # decomposition. ~+0.28M params (one magnitude scalar per output channel) but
+    # zero inference-time cost once weights are merged. Slower training (~10-20%).
+    lora_use_dora: bool = False
     # IMPORTANT: target only LM-side projections. We use a regex below.
     # SmolVLM uses Idefics3 architecture: text decoder is at .model.text_model
     lora_target_regex: str = (
@@ -126,6 +130,17 @@ ABLATIONS: dict[str, dict] = {
         "epochs": 5,
         "img_size": 384,
         "run_name": "smolvlm_qlora_r4_all7_v5_epochs5",
+    },
+    # v6: same as v3 (r=8, all-7, 384px, 5 epochs) but with DoRA enabled.
+    # Tests whether the magnitude-direction decomposition lifts accuracy at
+    # equal training duration and equivalent param budget (~4.62M trainable).
+    "v6_dora": {
+        "lora_r": 8,
+        "lora_alpha": 16,
+        "epochs": 5,
+        "img_size": 384,
+        "lora_use_dora": True,
+        "run_name": "smolvlm_qlora_dora_r8_all7_v6_epochs5",
     },
 }
 
