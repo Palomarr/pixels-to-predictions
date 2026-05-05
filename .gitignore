@@ -26,10 +26,14 @@ env/
 # ── Notebooks ────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 
-# ── OS / IDE ─────────────────────────────────────────────────────────────────
+# ── OS / IDE / tooling ───────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 *.swp
 *.swo
+.claude/
+
+# ── Reference docs (not part of the repo) ────────────────────────────────────
+KAGGLE COMPETITION STRATEGIES.pdf
